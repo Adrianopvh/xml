@@ -1,38 +1,60 @@
-# Script de Download - NFeDistribuicaoDFe
+# Oracle XML Extractor - PCDOCELETRONICO
 
-Este documento descreve a estratégia final para o processo de download massivo (ex: 248 mil notas) de XMLs da SEFAZ (Receita Federal) através do serviço oficial `distDFeInt`.
+Este projeto automatiza a extração de arquivos XML de Notas Fiscais Eletrônicas (NFe) diretamente de um banco de dados Oracle 12c, utilizando o cruzamento de dados entre as tabelas do sistema Winthor.
 
-## Problema Enfrentado
-Baixar milhares de notas sem controle resultaria no bloqueio temporário (cStat 656 - Consumo Indevido) ou banimento de IP/Certificado Digital, pois a SEFAZ aplica limites (Rate Limit) contra abuso de seus servidores web.
+## 🚀 Funcionalidades
 
-## Estratégia Adotada e Implementada
+- **Extração Direta**: Conecta ao Oracle e lê o campo `XMLNFE` da tabela `PCDOCELETRONICO`.
+- **Cruzamento de Dados (JOIN)**: Realiza um `LEFT JOIN` com a tabela `PCNFSAID` usando o `NUMTRANSACAO` para obter a `CHAVENFE` (Chave de Acesso de 44 dígitos).
+- **Nomeação Inteligente**: Salva os arquivos XML usando a `CHAVENFE` como nome do arquivo. Caso a chave não seja encontrada, utiliza o `NUMTRANSACAO` como fallback.
+- **Processamento em Lote**: Lê uma lista de transações de um arquivo de texto simples (`transacoes.txt`).
+- **Seguridade de Conexão**: Garante que a sessão do banco de dados seja aberta uma única vez por lote e encerrada com segurança ao final, evitando vazamento de processos no servidor.
+- **Suporte a CLOB**: Tratamento completo para campos CLOB (Character Large Object) do Oracle.
 
-Para resolver esse problema, adaptamos a arquitetura do projeto (`index.js`) para suportar um mecanismo de **Lote e Controle de Estado (Checkpoint)**:
+## 📋 Pré-requisitos
 
-1. **Rate Limit e Delay:**
-   - Entre cada requisição SOAP à SEFAZ, o script agora inclui um intervalo dinâmico (por padrão, **1,5 segundos** - configurável). Isso mantém uma frequência muito segura (abaixo de 1 requisição por segundo na prática, considerando o tempo de resposta da rede).
+1.  **Node.js**: Versão 16 ou superior recomendada.
+2.  **Oracle Instant Client**: Necessário para a conexão em modo Thick com bancos Oracle 12c.
+3.  **Dependências**:
+    - `oracledb`: Driver oficial da Oracle para Node.js.
+    - `dotenv`: Gerenciamento de variáveis de ambiente.
 
-2. **Checkpoint (Controle de Progresso):**
-   - O sistema cria e gerencia o arquivo `dados/controle.json`.
-   - Se o script baixar as primeiras 1.500 chaves de um total de 248.000 e por algum motivo (queda de energia, pausa manual, reinício) for interrompido, ao rodar novamente ele **vai ignorar** as 1.500 já baixadas e continuará a partir da chave 1.501.
-   - Isso garante eficiência, pois nunca tenta baixar a mesma nota duas vezes de forma redundante (o que poderia causar cStat 656).
+## ⚙️ Configuração
 
-3. **Tratamento de Consumo Indevido Inteligente:**
-   - Se, porventura, a SEFAZ ainda assim aplicar um bloqueio (Rejeição: Consumo Indevido), o script intercepta a resposta, pausa sua própria execução por um tempo maior (exemplo: **5 minutos** - configurável) e então tenta retomar o fluxo automaticamente.
+1.  Crie um arquivo `.env` na raiz do projeto com as seguintes variáveis:
 
-## Arquivos e Pastas
+    ```env
+    DB_USER=seu_usuario
+    DB_PASSWORD=sua_senha
+    DB_CONNECTION_STRING=host:porta/servico
+    ORACLE_CLIENT_DIR=C:\caminho\para\instantclient_19_25
+    ```
 
-- `/downloads/` -> Onde os arquivos XML extraídos do GZIP da SEFAZ são salvos de fato (nome_arquivo: `chave.xml`).
-- `/dados/controle.json` -> O banco de dados simples (JSON) que armazena os arrays de chaves `sucesso` e `erro`.
-- `chaves.json` -> O array base fornecido por você com as 248 mil chaves.
-- `index.js` -> O motor do script contendo a lógica iterativa das Promises e Delays.
+2.  Instale as dependências:
+    ```bash
+    npm install
+    ```
 
-## Utilização
+## 🛠️ Como Usar
 
-Basta garantir que as chaves estejam mapeadas em `chaves.json` (como um array de strings de 44 dígitos) e rodar o script no terminal:
+1.  Liste os números de transação desejados no arquivo `transacoes.txt` (um por linha).
+2.  Execute o script de extração:
+    ```bash
+    node index.js
+    ```
+3.  Os arquivos XML serão salvos automaticamente na pasta `nfe-download`.
 
+## 🧪 Testes
+
+Para validar a conectividade e configuração do ambiente sem processar dados, utilize o script de teste:
 ```bash
-node index.js
+node test-connection.js
 ```
 
-Pode rodar continuamente em qualquer servidor (incluindo PM2 ou Docker).
+## 📄 Estrutura do Projeto
+
+- `index.js`: Motor principal de extração e gravação de arquivos.
+- `test-connection.js`: Script utilitário para validar o ambiente e Instant Client.
+- `transacoes.txt`: Lista de entrada para o processamento.
+- `nfe-download/`: Pasta destino dos XMLs extraídos.
+- `.gitignore`: Configurado para não subir credenciais, XMLs ou drivers pesados para o repositório.
