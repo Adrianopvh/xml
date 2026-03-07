@@ -1,0 +1,15 @@
+{
+    "name": "nfe-downloader",
+    "version": "1.0.0",
+    "description": "Download de NFe via NFeDistribuicaoDFe usando Web Service da SEFAZ",
+    "main": "index.js",
+    "type": "commonjs",
+    "scripts": {
+        "start": "node index.js"
+    },
+    "dependencies": {
+        "axios": "^1.6.0",
+        "dotenv": "^16.3.1",
+        "oracledb": "^6.10.0"
+    }
+}

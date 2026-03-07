@@ -1,0 +1,19 @@
+# Node.js
+node_modules/
+
+# Configurações locais (senhas/tokens)
+.env
+
+# Diretório do Oracle Instant Client
+instantclient/
+instantclient_19_25/
+
+# Arquivos de dados de teste e downloads
+nfe-download/*.xml
+transacoes.txt
+
+# Arquivos de log e ds_store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
