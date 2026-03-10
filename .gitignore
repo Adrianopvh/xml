@@ -2,7 +2,7 @@
 node_modules/
 
 # Configurações locais (senhas/tokens)
-.env
+# .env
 
 # Diretório do Oracle Instant Client
 instantclient/
