@@ -14,12 +14,27 @@ const dbConfig = {
 const clientDir = process.env.ORACLE_CLIENT_DIR;
 const downloadDir = path.join(__dirname, 'nfe-download');
 
+// Configurações de Lote
+const BATCH_SIZE = 500; // Define o tamanho do lote para consultas no Oracle
+
 // Garante que a pasta de destino existe
 if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir);
 
 // ==========================================
-// FUNÇÃO PARA LER CLOB (Se o XML for longo)
+// FUNÇÕES AUXILIARES
 // ==========================================
+
+/**
+ * Divide um array em sub-arrays (lotes) de tamanho fixo.
+ */
+function chunkArray(array, size) {
+    const chunks = [];
+    for (let i = 0; i < array.length; i += size) {
+        chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
+}
+
 async function readClob(clob) {
     return new Promise((resolve, reject) => {
         if (typeof clob === 'string') {
@@ -59,7 +74,8 @@ async function extrairXMLs() {
         .map(linha => linha.trim())
         .filter(linha => linha.length > 0);
 
-    console.log(`📋 Lista carregada: ${listaTransacoes.length} transações (NUMTRANSACAO) a processar.`);
+    console.log(`📋 Lista carregada: ${listaTransacoes.length} transações a processar.`);
+    console.log(`📦 Processamento configurado em lotes de ${BATCH_SIZE} registros.\n`);
 
     // 1. Inicializa o Instant Client (Modo Thick)
     try {
@@ -76,18 +92,31 @@ async function extrairXMLs() {
 
     let connection;
     let salvos = 0;
-    let erros = 0;
-    let naoEncontrados = 0;
+    let errosTotal = 0;
+    let naoEncontradosTotal = 0;
 
     try {
         console.log(`- Conectando ao banco de dados...`);
         connection = await oracledb.getConnection(dbConfig);
         console.log('✅ Conexão estabelecida com sucesso!\n');
 
-        // Itera sobre cada NUMTRANSACAO informada no TXT
-        for (let i = 0; i < listaTransacoes.length; i++) {
-            const numTransacao = listaTransacoes[i];
-            console.log(`[${i + 1}/${listaTransacoes.length}] Consultando NUMTRANSACAO: ${numTransacao}...`);
+        // Divide a lista total em lotes
+        const lotes = chunkArray(listaTransacoes, BATCH_SIZE);
+
+        for (let i = 0; i < lotes.length; i++) {
+            const loteAtual = lotes[i];
+            const inicio = i * BATCH_SIZE + 1;
+            const fim = Math.min((i + 1) * BATCH_SIZE, listaTransacoes.length);
+
+            console.log(`🔄 Processando Lote ${i + 1}/${lotes.length} (Registros ${inicio} a ${fim})...`);
+
+            // Constrói os bind parameters dinamicamente: :v0, :v1, :v2...
+            const binds = {};
+            const bindNames = loteAtual.map((val, idx) => {
+                const key = `v${idx}`;
+                binds[key] = val;
+                return `:${key}`;
+            }).join(', ');
 
             const sql = `
                 SELECT 
@@ -96,67 +125,80 @@ async function extrairXMLs() {
                     S.CHAVENFE
                 FROM PCDOCELETRONICO D
                 LEFT JOIN PCNFSAID S ON D.NUMTRANSACAO = S.NUMTRANSVENDA
-                WHERE D.NUMTRANSACAO = :numTransacao
+                WHERE D.NUMTRANSACAO IN (${bindNames})
             `;
 
             try {
-                // Executa a Query com o bind parameter (proteção contra injeção e mais performance)
-                const result = await connection.execute(sql, { numTransacao: numTransacao }, {
+                const result = await connection.execute(sql, binds, {
                     outFormat: oracledb.OUT_FORMAT_OBJECT,
-                    fetchInfo: { "XMLNFE": { type: oracledb.STRING } } // Tenta forçar como string
+                    fetchInfo: { "XMLNFE": { type: oracledb.STRING } }
                 });
 
-                if (result.rows && result.rows.length > 0) {
-                    const row = result.rows[0];
-                    const xmlPayload = row.XMLNFE;
+                // Cria um mapa dos resultados para fácil verificação de quais transações voltaram
+                const resultadosMap = {};
+                if (result.rows) {
+                    for (const row of result.rows) {
+                        resultadosMap[row.NUMTRANSACAO] = row;
+                    }
+                }
 
-                    // Prioriza a chave de acesso da NFe. Caso falhe/não exista, usa o NUMTRANSACAO como fallback
-                    const nomeArquivo = row.CHAVENFE || row.NUMTRANSACAO;
+                // Processa cada transação do lote original
+                for (const numTransacao of loteAtual) {
+                    const row = resultadosMap[numTransacao];
 
-                    if (!xmlPayload) {
-                        console.log(`  ⚠️ Aviso: A transação ${numTransacao} existe na tabela, mas o campo XMLNFE está vazio.`);
-                        erros++;
+                    if (!row) {
+                        // console.log(`  ⚠️ NUMTRANSACAO ${numTransacao} não encontrada.`); // Log omitido para evitar flood em grandes volumes
+                        naoEncontradosTotal++;
                         continue;
                     }
 
-                    const filePath = path.join(downloadDir, `${nomeArquivo}.xml`);
+                    try {
+                        const xmlPayload = row.XMLNFE;
+                        const nomeArquivo = row.CHAVENFE || row.NUMTRANSACAO;
 
-                    let xmlConteudo = '';
-                    if (typeof xmlPayload === 'object' && xmlPayload !== null) {
-                        xmlConteudo = await readClob(xmlPayload);
-                    } else {
-                        xmlConteudo = xmlPayload;
+                        if (!xmlPayload) {
+                            errosTotal++;
+                            continue;
+                        }
+
+                        const filePath = path.join(downloadDir, `${nomeArquivo}.xml`);
+                        
+                        let xmlConteudo = '';
+                        if (typeof xmlPayload === 'object' && xmlPayload !== null) {
+                            xmlConteudo = await readClob(xmlPayload);
+                        } else {
+                            xmlConteudo = xmlPayload;
+                        }
+
+                        fs.writeFileSync(filePath, xmlConteudo, 'utf8');
+                        salvos++;
+                    } catch (errWrite) {
+                        console.error(`  ❌ Erro ao salvar transação ${numTransacao}:`, errWrite.message);
+                        errosTotal++;
                     }
-
-                    fs.writeFileSync(filePath, xmlConteudo, 'utf8');
-                    console.log(`  💾 [SUCESSO] Salvo arquivo: ${nomeArquivo}.xml`);
-                    salvos++;
-
-                } else {
-                    console.log(`  ⚠️ Aviso: NUMTRANSACAO ${numTransacao} não encontrada na tabela PCDOCELETRONICO.`);
-                    naoEncontrados++;
                 }
 
-            } catch (errSelect) {
-                console.error(`  ❌ Erro ao consultar/salvar a transação ${numTransacao}:`, errSelect.message);
-                erros++;
+                console.log(`  📊 Progresso: ${salvos} salvos | ${naoEncontradosTotal} não encontrados | ${errosTotal} erros.`);
+
+            } catch (errBatch) {
+                console.error(`  ❌ Erro crítico ao processar Lote ${i + 1}:`, errBatch.message);
+                errosTotal += loteAtual.length;
             }
         }
 
         console.log(`\n🎉 Processo Finalizado!`);
         console.log(`- Total Solicitado: ${listaTransacoes.length}`);
         console.log(`- Registros Salvos (${downloadDir}): ${salvos}`);
-        console.log(`- Não Encontrados: ${naoEncontrados}`);
-        console.log(`- Com Erro (Falha/Vazio): ${erros}`);
+        console.log(`- Não Encontrados: ${naoEncontradosTotal}`);
+        console.log(`- Falhas/Vazios: ${errosTotal}`);
 
     } catch (err) {
-        console.error('\n❌ Erro durante a comunicação principal com o Banco de Dados:', err.stack);
+        console.error('\n❌ Erro na comunicação com o Banco de Dados:', err.stack);
     } finally {
         if (connection) {
             try {
-                // FECHAMENTO SEGURO DA SESSÃO AO FINAL DO LOOP MESTRE
                 await connection.close();
-                console.log('\n🔌 Conexão com o Oracle encerrada com segurança.');
+                console.log('\n🔌 Conexão com o Oracle encerrada.');
             } catch (err) {
                 console.error('\n❌ Erro ao fechar a conexão', err.message);
             }
@@ -164,7 +206,7 @@ async function extrairXMLs() {
     }
 }
 
-// Executa e trata promessa principal
+// Executa
 extrairXMLs().catch(err => {
     console.error(err);
 });
