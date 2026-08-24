@@ -10,6 +10,7 @@ instantclient_19_25/
 
 # Arquivos de dados de teste e downloads
 nfe-download/*.xml
+danfe-download/*.pdf
 
 # Arquivos de log e ds_store
 npm-debug.log*

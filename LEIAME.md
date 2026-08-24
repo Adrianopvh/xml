@@ -1,12 +1,13 @@
 # Oracle XML Extractor - PCDOCELETRONICO
 
-Este projeto automatiza a extração de arquivos XML de Notas Fiscais Eletrônicas (NFe) diretamente de um banco de dados Oracle 12c, utilizando o cruzamento de dados entre as tabelas do sistema Winthor.
+Este projeto automatiza a extração de arquivos XML de Notas Fiscais Eletrônicas (NFe) diretamente de um banco de dados Oracle 12c, utilizando o cruzamento de dados entre as tabelas do sistema Winthor. Gera também o **DANFE em PDF** automaticamente para cada XML extraído.
 
 ## 🚀 Funcionalidades
 
 - **Extração Direta**: Conecta ao Oracle e lê o campo `XMLNFE` da tabela `PCDOCELETRONICO`.
 - **Cruzamento de Dados (JOIN)**: Realiza um `LEFT JOIN` com a tabela `PCNFSAID` usando o `NUMTRANSACAO` para obter a `CHAVENFE` (Chave de Acesso de 44 dígitos).
 - **Nomeação Inteligente**: Salva os arquivos XML usando a `CHAVENFE` como nome do arquivo. Caso a chave não seja encontrada, utiliza o `NUMTRANSACAO` como fallback.
+- **DANFE em PDF**: Renderiza automaticamente o DANFE (Documento Auxiliar da NF-e/NFC-e) em PDF para cada XML extraído, com suporte opcional a logo personalizada.
 - **Processamento em Lote**: Lê uma lista de transações de um arquivo de texto simples (`transacoes.txt`).
 - **Seguridade de Conexão**: Garante que a sessão do banco de dados seja aberta uma única vez por lote e encerrada com segurança ao final, evitando vazamento de processos no servidor.
 - **Suporte a CLOB**: Tratamento completo para campos CLOB (Character Large Object) do Oracle.
@@ -28,6 +29,10 @@ Este projeto automatiza a extração de arquivos XML de Notas Fiscais Eletrônic
     DB_PASSWORD=sua_senha
     DB_CONNECTION_STRING=host:porta/servico
     ORACLE_CLIENT_DIR=C:\caminho\para\instantclient_19_25
+
+    # Geração de DANFE em PDF (opcionais)
+    GERAR_PDF=true                       # default: true; defina false para desativar
+    DANFE_LOGO_PATH=./assets/logo.png    # opcional: caminho para logo da empresa (PNG/JPG)
     ```
 
 2.  Instale as dependências:
@@ -43,6 +48,7 @@ Este projeto automatiza a extração de arquivos XML de Notas Fiscais Eletrônic
     node index.js
     ```
 3.  Os arquivos XML serão salvos automaticamente na pasta `nfe-download`.
+4.  Os DANFEs em PDF serão salvos automaticamente na pasta `danfe-download` (se `GERAR_PDF=true`).
 
 ## 🧪 Testes
 
@@ -53,8 +59,9 @@ node test-connection.js
 
 ## 📄 Estrutura do Projeto
 
-- `index.js`: Motor principal de extração e gravação de arquivos.
+- `index.js`: Motor principal de extração, gravação de XML e geração de DANFE PDF.
 - `test-connection.js`: Script utilitário para validar o ambiente e Instant Client.
-- `transacoes.txt`: Lista de entrada para o processamento.
+- `transacoes.txt`: Lista de entrada para o processamento (NUMTRANSACAO por linha).
 - `nfe-download/`: Pasta destino dos XMLs extraídos.
-- `.gitignore`: Configurado para não subir credenciais, XMLs ou drivers pesados para o repositório.
+- `danfe-download/`: Pasta destino dos PDFs DANFE (criada automaticamente).
+- `.gitignore`: Configurado para não subir credenciais, XMLs/PDFs ou drivers pesados para o repositório.
