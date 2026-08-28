@@ -1,0 +1,22 @@
+🚀 Iniciando Extração de XML do Oracle 12c
+📄 Geração de DANFE PDF ATIVADA
+🖼️  Logo customizado: ./assets/logo.png
+
+📋 Lista carregada: 396 transações a processar.
+📦 Processamento configurado em lotes de 500 registros.
+
+- Carregando Oracle Instant Client de: d:\Projetos\xml\instantclient_19_25
+- Conectando ao banco de dados...
+✅ Conexão estabelecida com sucesso!
+
+🔄 Processando Lote 1/1 (Registros 1 a 396)...
+  📊 Progresso: 396 XML salvos | 396 DANFE PDF | 0 não encontrados | 0 erros.
+
+🎉 Processo Finalizado!
+- Total Solicitado: 396
+- XMLs Salvos (D:\Projetos\xml\nfe-download): 396
+- DANFE PDFs (D:\Projetos\xml\danfe-download): 396 gerados | 0 falhas
+- Não Encontrados: 0
+- Falhas/Vazios XML: 0
+
+🔌 Conexão com o Oracle encerrada.

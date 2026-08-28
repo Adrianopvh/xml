@@ -25,6 +25,9 @@ const GERAR_PDF = process.env.GERAR_PDF !== 'false'; // default true
 const DANFE_LOGO_PATH = process.env.DANFE_LOGO_PATH;
 const ORDENAR_ITENS = (process.env.ORDENAR_ITENS || 'xprod').toLowerCase();
 
+// NOMENCLATURA DE ARQUIVOS
+const ARQUIVO_SEPARADOR = process.env.ARQUIVO_SEPARADOR || '0';
+
 const xmlParser = new Parser({ mergeAttrs: true, ignoreAttrs: true, explicitArray: false });
 const xmlBuilder = new Builder({ headless: true, renderOpts: { pretty: false, indent: '', newline: '' } });
 
@@ -65,6 +68,52 @@ async function readClob(clob) {
             reject(err);
         });
     });
+}
+
+// ==========================================
+// NOMENCLATURA DE ARQUIVOS (formatação)
+// ==========================================
+
+function formatarDataDDMMYYYY(valorData) {
+    if (valorData === null || valorData === undefined || valorData === '') return '00000000';
+    try {
+        let dt;
+        if (valorData instanceof Date) {
+            dt = valorData;
+        } else {
+            const s = String(valorData).trim();
+            if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+                const [d, m, y] = s.split('/');
+                dt = new Date(`${y}-${m}-${d}T00:00:00`);
+            } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+                dt = new Date(s);
+            } else {
+                dt = new Date(s);
+            }
+        }
+        if (isNaN(dt.getTime())) return '00000000';
+        const dd = String(dt.getDate()).padStart(2, '0');
+        const mm = String(dt.getMonth() + 1).padStart(2, '0');
+        const yyyy = dt.getFullYear();
+        return `${dd}${mm}${yyyy}`;
+    } catch {
+        return '00000000';
+    }
+}
+
+function formatarCGC14Digitos(valorCgc) {
+    if (valorCgc === null || valorCgc === undefined) return '0'.repeat(14);
+    let limpo = String(valorCgc).replace(/[^0-9]/g, '');
+    if (limpo.length === 0) return '0'.repeat(14);
+    if (limpo.length >= 14) return limpo.slice(-14);
+    return limpo.padStart(14, '0');
+}
+
+function montarNomeArquivo(row, separador = ARQUIVO_SEPARADOR) {
+    const chave = String(row.CHAVENFE || row.NUMTRANSACAO || '').trim();
+    const dtsaida = formatarDataDDMMYYYY(row.DTSAIDA);
+    const cgc = formatarCGC14Digitos(row.CGC);
+    return `${chave}${separador}${dtsaida}${separador}${cgc}`;
 }
 
 function compararItens(a, b, modo) {
@@ -181,6 +230,8 @@ async function extrairXMLs() {
     let naoEncontradosTotal = 0;
     let danfesGerados = 0;
     let danfesErros = 0;
+    const naoEncontradosLista = [];
+    const duplicadosNaOrigem = [];
 
     try {
         console.log(`- Conectando ao banco de dados...`);
@@ -209,10 +260,14 @@ async function extrairXMLs() {
                 SELECT 
                     D.NUMTRANSACAO, 
                     D.XMLNFE,
-                    S.CHAVENFE
+                    S.CHAVENFE,
+                    S.NUMTRANSVENDA,
+                    S.DTSAIDA,
+                    S.CGC,
+                    (SELECT COUNT(*) FROM PCDOCELETRONICO D2 WHERE D2.NUMTRANSACAO = S.NUMTRANSVENDA) AS QTD_DUPLICADAS_ORIGEM
                 FROM PCDOCELETRONICO D
-                LEFT JOIN PCNFSAID S ON D.NUMTRANSACAO = S.NUMTRANSVENDA
-                WHERE D.NUMTRANSACAO IN (${bindNames})
+                INNER JOIN PCNFSAID S ON D.NUMTRANSACAO = S.NUMTRANSVENDA
+                WHERE S.NUMTRANSVENDA IN (${bindNames})
             `;
 
             try {
@@ -225,7 +280,14 @@ async function extrairXMLs() {
                 const resultadosMap = {};
                 if (result.rows) {
                     for (const row of result.rows) {
-                        resultadosMap[row.NUMTRANSACAO] = row;
+                        const chave = row.NUMTRANSVENDA || row.NUMTRANSACAO;
+                        resultadosMap[chave] = row;
+                        if (row.QTD_DUPLICADAS_ORIGEM && row.QTD_DUPLICADAS_ORIGEM > 1) {
+                            duplicadosNaOrigem.push({
+                                numTransacao: chave,
+                                qtd: row.QTD_DUPLICADAS_ORIGEM
+                            });
+                        }
                     }
                 }
 
@@ -234,14 +296,14 @@ async function extrairXMLs() {
                     const row = resultadosMap[numTransacao];
 
                     if (!row) {
-                        // console.log(`  ⚠️ NUMTRANSACAO ${numTransacao} não encontrada.`); // Log omitido para evitar flood em grandes volumes
                         naoEncontradosTotal++;
+                        naoEncontradosLista.push(numTransacao);
                         continue;
                     }
 
                     try {
                         const xmlPayload = row.XMLNFE;
-                        const nomeArquivo = row.CHAVENFE || row.NUMTRANSACAO;
+                        const nomeArquivo = montarNomeArquivo(row);
 
                         if (!xmlPayload) {
                             errosTotal++;
@@ -249,7 +311,7 @@ async function extrairXMLs() {
                         }
 
                         const filePath = path.join(downloadDir, `${nomeArquivo}.xml`);
-                        
+
                         let xmlConteudo = '';
                         if (typeof xmlPayload === 'object' && xmlPayload !== null) {
                             xmlConteudo = await readClob(xmlPayload);
@@ -291,6 +353,20 @@ async function extrairXMLs() {
         }
         console.log(`- Não Encontrados: ${naoEncontradosTotal}`);
         console.log(`- Falhas/Vazios XML: ${errosTotal}`);
+
+        if (naoEncontradosLista.length) {
+            console.log(`\n⚠️  TRANSAÇÕES NÃO ENCONTRADAS (ou sem vínculo em PCNFSAID):`);
+            for (const t of naoEncontradosLista) {
+                console.log(`  • ${t}`);
+            }
+        }
+
+        if (duplicadosNaOrigem.length) {
+            console.log(`\n🔴 DUPLICATAS DETECTADAS NA PCDOCELETRONICO (INNER JOIN pegou só 1 de cada):`);
+            for (const d of duplicadosNaOrigem) {
+                console.log(`  • NUMTRANSACAO ${d.numTransacao}: ${d.qtd} registros duplicados`);
+            }
+        }
 
     } catch (err) {
         console.error('\n❌ Erro na comunicação com o Banco de Dados:', err.stack);
